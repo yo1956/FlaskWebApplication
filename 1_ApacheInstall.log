@@ -129,4 +129,4 @@ Hint: Some lines were ellipsized, use -l to show in full.
 [ec2-user@ip-172-31-28-217 ~]$
 
 22-10-15 13:39 ~ $ curl http://35.74.251.5/
-AWS
+Test
