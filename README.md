@@ -1,5 +1,5 @@
 # FlaskWebApplicationSample
-AWS EC2上で簡単な在庫管理システム的なものを勉強用に作ってみる。
+AWS EC2上で簡単な在庫管理システム的なものを勉強用に開発
 
 ## アーキテクチャ
 
