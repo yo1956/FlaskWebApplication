@@ -3,11 +3,13 @@ AWS EC2上で簡単な在庫管理システム的なものを勉強用に作っ�
 
 ## アーキテクチャ
 
-  
+![Architecture](Architecture.png) 
 
 WebサーバがAPIサーバ、DBも兼ねる形。
+
 ApacheがHTTPリクエストをWSGIに渡し、
 WSGIがFlaskで記述したAPIを呼び出す。
+
 そして、APIがDBを操作する。
 
 ## ファイル構成

@@ -1,0 +1,132 @@
+//---------------------------------------------------------------------------------------------------------------------
+// Apacheインストール。
+//---------------------------------------------------------------------------------------------------------------------
+// Linuxで動かすWebサーバーで代表的なところが、ApacheとNginx。
+// Apacheは少量の同時接続で重めの処理に向いており、Nginxは大量の同時接続の軽い処理を担当させるのに向いている。
+// 今回は一台のサーバでWebサーバー、アプリケーションサーバー、DBサーバーの役割を担うため、
+// 動的コンテンツの処理も苦手でないApache向きだと判断した。Apacheのほうが歴史が長く、開発者向けの情報がより手に入りやすいのも理由。
+// なぜこのような違いが生まれるか？:
+// Apacheが大量接続に向かないのは、は1リクエストを1プロセスで処理するため、リクエスト数分プロセスやメモリ使用量が消費されてしまうが、
+// それらには上限があるため、と理解している。一方Nginxは1プロセスで複数リクエストを処理する作りのため、接続許容能力はApacheより上であるが、
+// シングルスレッドの作りのために処理時間が長くなる処理を実行した際はそれが終わらないとそこがボトルネックとなり処理能力が落ちてしまうため、
+// 重い処理はあまり向いていない。Apacheのようにマルチプロセスであれば、重い処理もプロセスそれぞれでやれば良いのでNginxより問題になりにくい。
+//---------------------------------------------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo yum install httpd
+読み込んだプラグイン:extras_suggestions, langpacks, priorities, update-motd
+依存性の解決をしています
+--> トランザクションの確認を実行しています。
+
+(中略)
+
+依存性関連をインストールしました:
+  apr.x86_64 0:1.7.0-9.amzn2                     apr-util.x86_64 0:1.6.1-5.amzn2.0.2
+  apr-util-bdb.x86_64 0:1.6.1-5.amzn2.0.2        generic-logos-httpd.noarch 0:18.0.0-4.amzn2
+  httpd-filesystem.noarch 0:2.4.54-1.amzn2       httpd-tools.x86_64 0:2.4.54-1.amzn2
+  mailcap.noarch 0:2.1.41-2.amzn2                mod_http2.x86_64 0:1.15.19-1.amzn2.0.1
+
+完了しました!
+[ec2-user@ip-172-31-28-217 ~]$
+
+//------------------------------------------------------
+// Apache起動、確認
+//------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo systemctl start httpd
+[ec2-user@ip-172-31-28-217 ~]$ sudo systemctl status httpd
+● httpd.service - The Apache HTTP Server
+   Loaded: loaded (/usr/lib/systemd/system/httpd.service; disabled; vendor preset: disabled)
+   Active: active (running) since 土 2022-10-15 04:28:34 UTC; 14s ago
+     Docs: man:httpd.service(8)
+ Main PID: 28699 (httpd)
+   Status: "Total requests: 0; Idle/Busy workers 100/0;Requests/sec: 0; Bytes served/sec:   0 B/sec"
+   CGroup: /system.slice/httpd.service
+           ├─28699 /usr/sbin/httpd -DFOREGROUND
+           ├─28700 /usr/sbin/httpd -DFOREGROUND
+           ├─28702 /usr/sbin/httpd -DFOREGROUND
+           ├─28707 /usr/sbin/httpd -DFOREGROUND
+           ├─28709 /usr/sbin/httpd -DFOREGROUND
+           └─28714 /usr/sbin/httpd -DFOREGROUND
+
+10月 15 04:28:34 ip-172-31-28-217.ap-northeast-1.compute.internal systemd[1]: Starting The Apac...
+10月 15 04:28:34 ip-172-31-28-217.ap-northeast-1.compute.internal systemd[1]: Started The Apach...
+Hint: Some lines were ellipsized, use -l to show in full.
+[ec2-user@ip-172-31-28-217 ~]$
+
+//----------------------------------------------------------------------------------
+// サーバーのIP(http://xx.xx.xx.xx/) にブラウザからアクセスしてみると、
+// Apacheのテストページが表示された。
+// Webサーバのファイルやディレクトリの外部に公開される範囲は、 ドキュメントルート以下。
+// そして、ドキュメントルートに index.html が無い場合はテストページが表示されてしまうが、
+// そこに index.html があれば、 その中身が表示される。
+// ということは、「curl http://xx.xx.xx.xx/」 コマンドで「Test」と表示されるようにするためには、
+// index.html の中身を、「Test」に書き換えれば良い。
+// そこで、まずドキュメントルートを確認。
+// Apacheの設定ファイルである httpd.conf に記載がある模様
+//----------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ grep -i 'DocumentRoot' /etc/httpd/conf/httpd.conf
+# DocumentRoot: The directory out of which you will serve your
+DocumentRoot "/var/www/html"
+    # access content that does not live under the DocumentRoot.
+[ec2-user@ip-172-31-28-217 ~]$
+    
+//----------------------------------------------------------------------------------
+// ドキュメントルートに index.html が無い場合はテストページが表示されてしまうため、
+// index.htmlを作成(中身は「Test」)
+//----------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ cd /var/www/html
+[ec2-user@ip-172-31-28-217 html]$ sudo vi index.html
+
+( Test と記載)
+
+//----------------------------------------------------------------------------------
+// 「Test」と表示されることをローカルから確認
+//----------------------------------------------------------------------------------
+22-10-15 13:31 ~ $ curl http://35.74.251.5/
+Test
+
+//----------------------------------------------------------------------------------
+// サーバ自動起動設定
+//----------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 www]$ sudo systemctl enable httpd
+Created symlink from /etc/systemd/system/multi-user.target.wants/httpd.service to /usr/lib/systemd/system/httpd.service.
+
+//----------------------------------
+// インスタンスを再起動後、再度接続する。
+//----------------------------------
+[ec2-user@ip-172-31-28-217 www]$ sudo reboot
+Connection to 35.74.251.5 closed by remote host.
+Connection to 35.74.251.5 closed.
+22-10-15 13:43 ~/Projects/FlaskWebApplicationSample $ ssh -i /Users/y_yoshida/Projects/FlaskWebApplicationSample/ec2 ec2-user@35.74.251.5
+Enter passphrase for key '/Users/y_yoshida/Projects/FlaskWebApplicationSample/ec2':
+Last login: Sat Oct 15 03:14:02 2022 from p5184133-ipoe.ipoe.ocn.ne.jp
+
+       __|  __|_  )
+       _|  (     /   Amazon Linux 2 AMI
+      ___|\___|___|
+
+https://aws.amazon.com/amazon-linux-2/
+
+//--------------------------------------------------------------------------------
+// status確認および、ローカルでcurlコマンドを実行し、自動でWebサーバとして起動していることを確認。
+//--------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo systemctl status httpd
+● httpd.service - The Apache HTTP Server
+   Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; vendor preset: disabled)
+   Active: active (running) since 土 2022-10-15 04:43:24 UTC; 3min 7s ago
+     Docs: man:httpd.service(8)
+ Main PID: 2028 (httpd)
+   Status: "Total requests: 2; Idle/Busy workers 100/0;Requests/sec: 0.0112; Bytes served/sec:   7 B/sec"
+   CGroup: /system.slice/httpd.service
+           ├─2028 /usr/sbin/httpd -DFOREGROUND
+           ├─2058 /usr/sbin/httpd -DFOREGROUND
+           ├─2059 /usr/sbin/httpd -DFOREGROUND
+           ├─2060 /usr/sbin/httpd -DFOREGROUND
+           ├─2061 /usr/sbin/httpd -DFOREGROUND
+           └─2062 /usr/sbin/httpd -DFOREGROUND
+
+10月 15 04:43:24 ip-172-31-28-217.ap-northeast-1.compute.internal systemd[1]: Starting The Apac...
+10月 15 04:43:24 ip-172-31-28-217.ap-northeast-1.compute.internal systemd[1]: Started The Apach...
+Hint: Some lines were ellipsized, use -l to show in full.
+[ec2-user@ip-172-31-28-217 ~]$
+
+22-10-15 13:39 ~ $ curl http://35.74.251.5/
+AWS

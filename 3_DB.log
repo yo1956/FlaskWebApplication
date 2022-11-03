@@ -1,0 +1,284 @@
+========================== システム概要 ================================
+
+■システムアーキテクチャ(イメージ図)
+
+              Client
+                |
+                | HTTP
+                |
+ ----- WebServer(Apache)/AWS EC2----
+|  API Server(Flask(Python) + WSGI) |
+|  MariaDB                          |
+ -----------------------------------
+
+WebサーバがAPIサーバ、DBも兼ねる形。
+ApacheがHTTPリクエストをWSGIに渡し、
+WSGIがFlaskで記述したAPIを呼び出す。
+そして、APIがDBを操作する。
+
+■ファイル構成
+/var/www/html/v1
+              ├── api.py
+              └── api.wsgi
+/etc/httpd/conf
+              └── httpd.conf
+
+■DBテーブル定義
+PROCUCTS: 商品とその在庫数を管理する。商品名は重複しない想定。
++------+--------+
+| NAME | AMOUNT |
++------+--------+
+PRIMARY KEY: NAME
+
+SALES: 商品とその売上高を管理する。売上合計を取得したい場合は、全商品の売上を合計する。
+本当はたぶん売上を一意に決めるIDとかあったほうが良い
++------+----------+
+| NAME | EARNINGS |
++------+----------+
+PRIMARY KEY: NONE
+
+========================== 作業ログ ================================
+
+//---------------------------------------------------------------------------------------------------
+// python3.8, pip, Flaskをインストール
+//---------------------------------------------------------------------------------------------------
+// Web系のフレームワークを持つ言語の中では使い慣れているため、とりあえずPythonを使うことにしてみた。
+// ただPythonのWebフレームワークを使用したことはなかったので調査をした。
+// DjangoとFlaskが有名で情報も多そうだったので、その2択で考えてみる。
+// Djangoは色々な機能がデフォルトで付いておりWeb開発フル装備のためシンプルなアプリを作るには複雑で、学習コストが高い。
+// 今回の場合はシンプルなAPIなので、DjangoよりシンプルなFlaskを選択した。
+// Flask：必要最低限のコア機能＋拡張機能でアプリを作成できるようになる、というコンセプトのマイクロフレームワーク。
+//---------------------------------------------------------------------------------------------------
+ [ec2-user@ip-172-31-28-217 ~]$ sudo yum clean metadata && sudo yum install python38
+読み込んだプラグイン:extras_suggestions, langpacks, priorities, update-motd
+リポジトリーを清掃しています: amzn2-core amzn2extra-docker amzn2extra-httpd_5f_modules
+                            : amzn2extra-nginx1 amzn2extra-python3.8
+22 個の metadata ファイルを削除しました
+
+(略)
+
+[ec2-user@ip-172-31-28-217 ~]$ sudo pip3.8 install Flask
+WARNING: Running pip install with root privileges is generally not a good idea. Try `pip3.8 install --user` instead.
+Collecting Flask
+  Downloading Flask-2.2.2-py3-none-any.whl (101 kB)
+     |████████████████████████████████| 101 kB 13.5 MB/s
+Collecting itsdangerous>=2.0
+  Downloading itsdangerous-2.1.2-py3-none-any.whl (15 kB)
+
+(略)
+
+//-------------------------------------------------------------
+// Flask公式によると python3.6 以降をサポートするとのことなので、
+// pythonのデフォルトを切り替える
+//-------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo update-alternatives --install /usr/bin/python python /usr/bin/python2.7 1
+[ec2-user@ip-172-31-28-217 ~]$ sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.8 2
+[ec2-user@ip-172-31-28-217 ~]$ sudo update-alternatives --config python
+
+2 プログラムがあり 'python' を提供します。
+
+  選択       コマンド
+-----------------------------------------------
+*  1           /usr/bin/python2.7
+ + 2           /usr/bin/python3.8
+
+Enter を押して現在の選択 [+] を保持するか、選択番号を入力します:^[[A
+
+2 プログラムがあり 'python' を提供します。
+
+  選択       コマンド
+-----------------------------------------------
+*  1           /usr/bin/python2.7
+ + 2           /usr/bin/python3.8
+
+Enter を押して現在の選択 [+] を保持するか、選択番号を入力します:
+[ec2-user@ip-172-31-28-217 ~]$ python --version
+Python 3.8.5
+
+//---------------------------------------------------------------------------------------
+// WebサーバとPythonアプリケーション間のインターフェースのWSGIをインストール。
+// mod_wsgiはyumでもインストール可能だが、python2と紐付いてしまうらしく、
+// ソースコードから以下のコマンドでコンパイルする。
+//---------------------------------------------------------------------------------------
+// WSGIはPythonにおいて、WebサーバとWebアプリケーションを接続するための標準化されたインターフェース。
+// つまりサーバとアプリケーション間にWSGIを挟んでおけば、異なるWebサーバへの移行が容易になる。
+// もしWSGIを使わずにWebアプリケーション内でサーバへの接続部分を実装していたら、
+// Webサーバを移行したいと思ったときに、アプリケーション側の修正が必要となってしまう。
+//---------------------------------------------------------------------------------------
+yum install gcc
+yum install httpd-devel
+yum install python3-devel
+yum install git
+git clone https://github.com/GrahamDumpleton/mod_wsgi.git
+
+(コンパイル)
+./configure --with-python=/usr/bin/python3
+make
+make install
+
+
+//-----------------------------------------------------------------------
+// httpd.conf にWSGIの設定を追記。
+// ・WSGIモジュールの読み込み
+// ・http://xx.xx.xx.xx/v1/ へのリクエストがあった際に api.wsgi を呼び出す
+// api.wsgi には、 /var/www/html/v1/api.py を呼びだすように記載。
+// api.py に、APIを記述する。
+//------------------------------------------------------------------------
+// WSGIScriptAlias では、http://xx.xx.xx.xx/ へのリクエストがあった際に
+// api.wsgi を呼び出すように記載してしまわないように注意した(index.html と競合する)。
+//------------------------------------------------------------------------
+(httpd.conf, 以下を追加)
+LoadModule wsgi_module /usr/lib64/httpd/modules/mod_wsgi.so
+WSGIScriptAlias /v1 /var/www/html/v1/api.wsgi
+
+(api.wsgi)
+import sys, site
+
+sys.path.insert(0, '/var/www/html/v1')
+from api import app as application
+
+//----------------------------------------------------------------------------------------------------------------------
+// ここまでで、http://xx.xx.xx.xx/v1/ へのリクエストでAPIを使用できる仕組みを作ることができた。
+// 次は、API内部からアクセスするためのDBを作成する。
+// まずはインストールする。
+//----------------------------------------------------------------------------------------------------------------------
+// 在庫管理システム的なものを作ってみるが、データの整合性を保証できてほしいため、RDBを使うことにした。
+// 無償で使えるRDB：MySQL, MariaDB, PostgreSQLあたりが代表的。
+// MariaDBはMySQLから派生したもので、MySQLの開発陣がさらに性能や安全性を高めるために開発したものなので、
+// MySQLかMariaDBなら、Webフレームワークが対応しないなどが無い限りは基本的にMariaDBを使えばよいと判断。
+// PostgreSQLは高機能のようだが、MySQLやMariaDBの方がとっつきやすさは上との調査結果が得られたので、今回はとりあえずMariaDBを選択してみた。
+// が、正直今もここについてはあまりよくわかっていない。厳密な意味で比較して選択するには、もっと経験や知識が必要だと感じた。
+//----------------------------------------------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ amazon-linux-extras | grep -i maria
+ 54  mariadb10.5=latest       enabled      [ =stable ]
+[ec2-user@ip-172-31-28-217 ~]$ sudo amazon-linux-extras install mariadb10.5
+Installing mariadb
+読み込んだプラグイン:extras_suggestions, langpacks, priorities, update-motd
+リポジトリーを清掃しています: amzn2-core amzn2extra-docker amzn2extra-httpd_5f_modules amzn2extra-mariadb10.5 amzn2extra-nginx1
+                            : amzn2extra-python3.8
+32 個の metadata ファイルを削除しました
+
+(中略)
+
+  perl-Net-Daemon.noarch 0:0.48-5.amzn2                                        perl-PlRPC.noarch 0:0.2020-14.amzn2
+  postgresql-libs.x86_64 0:9.2.24-8.amzn2                                      sphinx.x86_64 0:2.2.11-5.amzn2.0.1
+
+完了しました!
+[ec2-user@ip-172-31-28-217 ~]$ mariadb -V
+mariadb  Ver 15.1 Distrib 10.5.10-MariaDB, for Linux (x86_64) using  EditLine wrapper
+
+//----------------------------------------------------------------------------------
+// DB起動
+//----------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo systemctl start mariadb.service
+[ec2-user@ip-172-31-28-217 ~]$ sudo systemctl status mariadb.service
+● mariadb.service - MariaDB 10.5 database server
+   Loaded: loaded (/usr/lib/systemd/system/mariadb.service; disabled; vendor preset: disabled)
+   Active: active (running) since 日 2022-10-16 10:06:59 UTC; 12s ago
+     Docs: man:mariadbd(8)
+           https://mariadb.com/kb/en/library/systemd/
+  Process: 2960 ExecStartPost=/usr/libexec/mariadb-check-upgrade (code=exited, status=0/SUCCESS)
+  Process: 2798 ExecStartPre=/usr/libexec/mariadb-prepare-db-dir %n (code=exited, status=0/SUCCESS)
+  Process: 2772 ExecStartPre=/usr/libexec/mariadb-check-socket (code=exited, status=0/SUCCESS)
+ Main PID: 2907 (mariadbd)
+   Status: "Taking your SQL requests now..."
+   CGroup: /system.slice/mariadb.service
+           └─2907 /usr/libexec/mariadbd --basedir=/usr
+
+10月 16 10:06:57 ip-172-31-28-217.ap-northeast-1.compute.internal systemd[1]: Starting MariaDB 10.5 database server...
+10月 16 10:06:57 ip-172-31-28-217.ap-northeast-1.compute.internal mariadb-prepare-db-dir[2798]: Initializing MariaDB database
+10月 16 10:06:59 ip-172-31-28-217.ap-northeast-1.compute.internal mariadb-prepare-db-dir[2798]: Two all-privilege accounts were created.
+10月 16 10:06:59 ip-172-31-28-217.ap-northeast-1.compute.internal mariadb-prepare-db-dir[2798]: One is root@localhost, it has no password, bu...to
+10月 16 10:06:59 ip-172-31-28-217.ap-northeast-1.compute.internal mariadbd[2907]: 2022-10-16 10:06:59 0 [Note] /usr/libexec/mariadbd (mysql... ...
+10月 16 10:06:59 ip-172-31-28-217.ap-northeast-1.compute.internal systemd[1]: Started MariaDB 10.5 database server.
+Hint: Some lines were ellipsized, use -l to show in full.
+
+//----------------------------------------------------------------------------------
+// DBを初期設定する。
+// 誰でもアクセス可能なテスト用DBの削除など、
+// 実運用上やっておくべき処理をインタラクティブに実行できるコマンド
+//----------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo mysql_secure_installation
+
+NOTE: RUNNING ALL PARTS OF THIS SCRIPT IS RECOMMENDED FOR ALL MariaDB
+      SERVERS IN PRODUCTION USE!  PLEASE READ EACH STEP CAREFULLY!
+
+In order to log into MariaDB to secure it, we'll need the current
+password for the root user. If you've just installed MariaDB, and
+haven't set the root password yet, you should just press enter here.
+
+(略)
+
+//----------------------------------------------------------------------------------
+// DBテーブル作成
+// 実際に作成したテーブルは本作業ログの冒頭に記載
+//----------------------------------------------------------------------------------
+MariaDB [testdb]> CREATE TABLE PRODUCTS( NAME CHAR(8), AMOUNT INT UNSIGNED , PRIMARY KEY (NAME) ) CHARACTER SET UTF8;
+Query OK, 0 rows affected (0.008 sec)
+
+MariaDB [testdb]> CREATE TABLE SALES ( NAME CHAR(8), EARNINGS FLOAT UNSIGNED , PRIMARY KEY (NAME) ) CHARACTER SET UTF8;
+Query OK, 0 rows affected (0.006 sec)
+
+MariaDB [testdb]> INSERT INTO PRODUCTS (NAME, AMOUNT) VALUES ('xxx', 5);
+Query OK, 1 row affected (0.001 sec)
+
+MariaDB [testdb]> SELECT * FROM PRODUCTS
+    -> ;
++------+--------+
+| NAME | AMOUNT |
++------+--------+
+| xxx  |      5 |
++------+--------+
+1 row in set (0.000 sec)
+
+//----------------------------------------------------------------------------------
+// SALESのプライマリーキーを削除。
+// 売上のたびに、商品ごとの履歴が残るようにするために、変更。
+//----------------------------------------------------------------------------------
+MariaDB [testdb]> alter table SALES drop primary key;
+Query OK, 2 rows affected (0.023 sec)
+Records: 2  Duplicates: 0  Warnings: 0
+
+//----------------------------------------------------------------------------------
+// DB「testdb」に関する全権限を持つユーザ作成
+//----------------------------------------------------------------------------------
+MariaDB [(none)]> create user 'connect_user@localhost' identified by 'pass';
+Query OK, 0 rows affected (0.001 sec)
+
+MariaDB [(none)]> grant all privileges on testdb.* to 'connect_user@localhost';
+Query OK, 0 rows affected (0.002 sec)
+
+//----------------------------------------------------------------------------------
+// DBも自動起動設定しておく
+//----------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo systemctl enable mariadb
+Created symlink from /etc/systemd/system/mysql.service to /usr/lib/systemd/system/mariadb.service.
+Created symlink from /etc/systemd/system/mysqld.service to /usr/lib/systemd/system/mariadb.service.
+Created symlink from /etc/systemd/system/multi-user.target.wants/mariadb.service to /usr/lib/systemd/system/mariadb.service.
+
+
+//----------------------------------------------------------------------------------
+// FlaskからDBを操作するためにflask-mysqlをインストール
+//----------------------------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo pip3.8 install flask-mysql
+WARNING: Running pip install with root privileges is generally not a good idea. Try `pip3.8 install --user` instead.
+Collecting flask-mysql
+  Downloading Flask_MySQL-1.5.2-py2.py3-none-any.whl (3.8 kB)
+Requirement already satisfied: Flask in /usr/local/lib/python3.8/site-packages (from flask-mysql) (2.2.2)
+Collecting PyMySQL
+  Downloading PyMySQL-1.0.2-py3-none-any.whl (43 kB)
+     |████████████████████████████████| 43 kB 4.6 MB/s
+Requirement already satisfied: itsdangerous>=2.0 in /usr/local/lib/python3.8/site-packages (from Flask->flask-mysql) (2.1.2)
+Requirement already satisfied: Jinja2>=3.0 in /usr/local/lib/python3.8/site-packages (from Flask->flask-mysql) (3.1.2)
+Requirement already satisfied: Werkzeug>=2.2.2 in /usr/local/lib/python3.8/site-packages (from Flask->flask-mysql) (2.2.2)
+Requirement already satisfied: importlib-metadata>=3.6.0 in /usr/local/lib/python3.8/site-packages (from Flask->flask-mysql) (5.0.0)
+Requirement already satisfied: click>=8.0 in /usr/local/lib/python3.8/site-packages (from Flask->flask-mysql) (8.1.3)
+Requirement already satisfied: zipp>=0.5 in /usr/local/lib/python3.8/site-packages (from importlib-metadata>=3.6.0->Flask->flask-mysql) (3.9.0)
+Requirement already satisfied: MarkupSafe>=2.0 in /usr/local/lib64/python3.8/site-packages (from Jinja2>=3.0->Flask->flask-mysql) (2.1.1)
+Installing collected packages: PyMySQL, flask-mysql
+Successfully installed PyMySQL-1.0.2 flask-mysql-1.5.2
+[ec2-user@ip-172-31-28-217 ~]$
+
+//----------------------------------------------------------------------------------
+// ここまで来るとすべての準備が整うので、あとはAPIを記述すれば完成
+//----------------------------------------------------------------------------------

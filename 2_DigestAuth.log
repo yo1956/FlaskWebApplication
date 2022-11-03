@@ -1,0 +1,86 @@
+//------------------------------------------
+// URLに対するファイルや設定が無いので、404が返る
+//------------------------------------------
+22-10-15 13:46 ~ $ curl http://35.74.251.5/secret
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<html><head>
+<title>404 Not Found</title>
+</head><body>
+<h1>Not Found</h1>
+<p>The requested URL was not found on this server.</p>
+</body></html>
+
+//----------------------------------------------------
+// ダイジェスト認証の設定をしていないため、こちらも当然通らない
+//----------------------------------------------------
+22-10-15 13:54 ~ $ curl --digest -u test-user:test http://35.74.251.5/secret
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<html><head>
+<title>404 Not Found</title>
+</head><body>
+<h1>Not Found</h1>
+<p>The requested URL was not found on this server.</p>
+</body></html>
+
+//-----------------------------------------------------------
+// ダイジェスト認証の設定を httpd.conf に追加する。
+// /var/www/html/secret にアクセスの際は、
+// ダイジェスト認証を行うようにする設定。
+// /etc/httpd/.digest内の認証可能なユーザとパスワードの情報を入れる。
+//-----------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo vim /etc/httpd/conf/httpd.conf
+
+( httpd.conf ファイル内に以下の記載を追加)
+
+<Directory /var/www/html/secret>
+    AuthType Digest
+    AuthName "digest auth"
+    AuthUserFile "/etc/httpd/.digest"
+    Require valid-user
+</Directory>
+
+//----------------------------------------------------
+// 設定を反映させるためApacheを再起動。
+// httpd.conf を修正後は、再起動が必要。
+//----------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo apachectl restart
+
+//----------------------------------------------------
+// ダイジェスト認証のユーザーとパスワードを設定
+//----------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ sudo htdigest -c /etc/httpd/.digest "digest auth" aws
+Adding password for test-user in realm digest auth.
+New password:
+Re-type new password:
+
+(↑testと入力。)
+
+//-------------------------------------------------------------
+// /etc/httpd/.digest を確認すると、
+// ユーザ名とパスワードの情報が入っているのがわかる。
+// パスワードは、Basic認証の欠点を補い、ハッシュ化されていることがわかる。
+//-------------------------------------------------------------
+[ec2-user@ip-172-31-28-217 ~]$ cat /etc/httpd/.digest
+test:digest auth:c4ab8ba39b490e883ae51e07090593a0
+
+
+//------------------------------------------------------------------------------
+// http://35.74.251.5/secret へのリクエストで 
+// /var/www/html/secret.html が返るように httpd.conf を設定。
+// 先ほど追加した <Directory /var/www/html/secret> 内に
+// DirectoryIndex の項を追加。(ディレクトリへのリクエストがあったときに返すファイルを指定)
+//------------------------------------------------------------------------------
+<Directory /var/www/html/secret>
+    AuthType Digest
+    AuthName "digest auth"
+    AuthUserFile "/etc/httpd/.digest"
+    Require valid-user
+
+    DirectoryIndex secret.html
+</Directory>
+
+//------------------------------------------------------------------------------
+// ダイジェスト認証接続確認
+//------------------------------------------------------------------------------
+22-10-17 23:36 ~ $ curl --digest -u test-user:test http://35.74.251.5/secret
+SUCCESS
