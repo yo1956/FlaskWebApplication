@@ -12,8 +12,8 @@
  -----------------------------------
 
 WebサーバがAPIサーバ、DBも兼ねる形。
-ApacheがHTTPリクエストをWSGIに渡し、
-WSGIがFlaskで記述したAPIを呼び出す。
+ApacheがHTTPリクエストを受け取り、
+WSGIを通してFlaskで記述したAPIを呼び出す。
 そして、APIがDBを操作する。
 
 ■ファイル構成
