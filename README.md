@@ -7,8 +7,8 @@ EC2上で簡単な在庫管理システムを勉強用に開発
 
 WebサーバがAPサーバ、DBも兼ねる形。
 
-ApacheがHTTPリクエストをWSGIに渡し、
-WSGIがFlaskで記述したAPIを呼び出す。
+ApacheがHTTPリクエストを受け取り、
+WSGIを通してFlaskで記述したAPIを呼び出す。
 
 そして、APIがDBを操作する。
 
